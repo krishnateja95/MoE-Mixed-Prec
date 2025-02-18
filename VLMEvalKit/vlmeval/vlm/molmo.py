@@ -3,6 +3,9 @@ from PIL import Image
 from .base import BaseModel
 from ..smp import *
 from ..dataset import DATASET_TYPE
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 TYPE_PROMPTS = {
     'Y/N':'vqa2:',
@@ -43,27 +46,39 @@ class molmo(BaseModel):
             raise e
 
         if '72b' not in model_path.lower():
-            self.model = AutoModelForCausalLM.from_pretrained(
+            
+            from .Molmo.modeling_molmoe import MolmoForCausalLM
+            
+            self.model = MolmoForCausalLM.from_pretrained(
                 model_path,
                 trust_remote_code=True,
                 torch_dtype=torch.bfloat16,
                 device_map='cuda',
-                cache_dir = '/lus/grand/projects/datascience/krishnat/model_weights/LLaMA/llama_cache/'
-)
+                # cache_dir = '/lus/grand/projects/datascience/krishnat/model_weights/LLaMA/llama_cache/'
+                cache_dir = '/vast/users/schittyvenkata/model_weights/'
+                )
         else:
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
                 trust_remote_code=True,
                 torch_dtype=torch.bfloat16,
                 device_map='auto', 
-                cache_dir = '/lus/grand/projects/datascience/krishnat/model_weights/LLaMA/llama_cache/'
-)
-
+                cache_dir = '/vast/users/schittyvenkata/model_weights/'
+                # cache_dir = '/lus/grand/projects/datascience/krishnat/model_weights/LLaMA/llama_cache/'
+                )
+            
         self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, torch_dtype=torch.bfloat16)
         self.kwargs = kwargs
         self.model_name = model_path
         # set default maximum number of crops to 36
         self.max_crops = kwargs.get('max_crops', 36)
+
+    def get_expert_frequency_dictionary(self):
+        return self.model.get_expert_frequency_dict()
+    
+    def get_l2_norm_dict(self):
+        return
+    
 
     def use_custom_prompt(self, dataset):
         if DATASET_TYPE(dataset) in ['Y/N', 'MCQ', 'VQA']:

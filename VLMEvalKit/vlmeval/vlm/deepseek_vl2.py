@@ -5,7 +5,9 @@ import warnings
 from .base import BaseModel
 from ..smp import *
 from PIL import Image
-
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 class DeepSeekVL2(BaseModel):
 

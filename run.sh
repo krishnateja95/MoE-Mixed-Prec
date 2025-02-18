@@ -1,7 +1,11 @@
-module use /soft/modulefiles/
-module load conda
-conda activate MoE_Mixed_Precision
+# module use /soft/modulefiles/
+# module load conda
+# conda activate MoE_Mixed_Precision
 
-export LMUData="/lus/grand/projects/datascience/krishnat/home_dir_code/datasets/VLMEvalKit/"
+source ~/.bashrc
+conda init
+conda activate MoE_Mixed_prec
 
-python VLMEvalKit/run.py --data MME --model molmoE-1B-0924 --mode all --work-dir ./results
+export LMUData="/vast/users/schittyvenkata/home_dir_code/datasets"
+
+python VLMEvalKit/run.py --data MME --model molmoE-1B-0924 --mode all --work-dir ./results_customs

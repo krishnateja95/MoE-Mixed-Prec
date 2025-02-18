@@ -39,7 +39,7 @@ import einops
 from transformers import PreTrainedModel, GenerationConfig, Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from config_molmoe import (
+from .config_molmoe import (
     ActivationType,
     BlockType,
     LayerNormType,
@@ -49,8 +49,7 @@ from config_molmoe import (
     AttentionType,
 )
 
-
-from config_molmoe import (
+from .config_molmoe import (
     MolmoConfig,
     VisionBackboneConfig, ModelConfig
 )
@@ -823,6 +822,20 @@ class MolmoeSparseMoeBlock(nn.Module):
             eps=config.layer_norm_eps
         )
 
+        self.init_perf_dict()
+
+    def init_perf_dict(self):
+        self.expert_frquency_dict = {i: 0 for i in range(self.num_experts)}
+        
+    def get_l2_norm_dict(self):
+        self.expert_l2_norm_dict = {}
+        
+        for expert_id, expert_tensor in enumerate(self.experts):
+            self.expert_l2_norm_dict[expert_id] = torch.norm(expert_tensor, p=2)
+    
+    def get_expert_frequency_dict(self):
+        return self.expert_frquency_dict
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = self.ff_norm(hidden_states)
         batch_size, sequence_length, hidden_dim = hidden_states.shape
@@ -836,13 +849,15 @@ class MolmoeSparseMoeBlock(nn.Module):
         # we cast back to the input dtype
         routing_weights = routing_weights.to(hidden_states.dtype)
 
-        final_hidden_states = torch.zeros(
-            (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
-        )
+        final_hidden_states = torch.zeros((batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device)
 
         # One hot encode the selected experts to create an expert mask
         # this will be used to easily index which expert is going to be selected
         expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+
+        for token_index in range(0, int(selected_experts.shape[0])):
+            for target_expert in selected_experts[token_index].tolist():
+                self.expert_frquency_dict[target_expert] += 1
 
         # Loop over all available experts in the model and perform the computation on each expert
         for expert_idx in range(self.num_experts):
@@ -858,7 +873,9 @@ class MolmoeSparseMoeBlock(nn.Module):
             # However `index_add_` only support torch tensors for indexing so we'll use
             # the `top_x` tensor here.
             final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
+        
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+        
         return final_hidden_states, router_logits
 
 
@@ -894,6 +911,9 @@ class MolmoDecoderLayer(nn.Module):
             config.residual_dropout, 
             mask_p=config.response_residual_dropout
         ) 
+
+    def get_expert_frequency_dict(self):
+        self.mlp.get_expert_frequency_dict()
 
     def forward(
         self,
@@ -1805,6 +1825,14 @@ class MolmoModel(MolmoPretrainedModel):
         else:
             return device
 
+    def get_expert_frequency_dict(self):
+        expert_frequency_dictionary = {}
+
+        for block_idx, layer in enumerate(self.transformer.blocks):
+            expert_frequency_dictionary[block_idx] = layer.get_expert_frequency_dict()
+
+        return expert_frequency_dictionary
+    
     def forward(
         self,
         input_ids: torch.LongTensor,
@@ -2196,6 +2224,9 @@ class MolmoForCausalLM(PreTrainedModel):
                 bias=config.include_bias,
                 device=config.init_device,
             )
+
+    def get_expert_frequency_dict(self):
+        return self.model.get_expert_frequency_dict()
 
     def forward(
         self,

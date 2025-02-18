@@ -6,7 +6,6 @@ import requests
 # cache_dir = '/lus/grand/projects/datascience/krishnat/model_weights/LLaMA/llama_cache/'
 
 cache_dir = '/vast/users/schittyvenkata/model_weights/'
-
 processor = AutoProcessor.from_pretrained(
     'allenai/MolmoE-1B-0924',
     trust_remote_code=True,
