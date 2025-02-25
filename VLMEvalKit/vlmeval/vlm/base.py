@@ -97,12 +97,6 @@ class BaseModel:
         else:
             return None
 
-    def get_expert_frequency_dict(self):
-        return self.get_expert_frequency_dictionary()
-    
-    def get_l2_norm_dict(self):
-        return
-
     def generate(self, message, dataset=None):
         """Generate the output message.
 

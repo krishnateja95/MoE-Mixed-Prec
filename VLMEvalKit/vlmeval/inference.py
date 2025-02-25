@@ -68,7 +68,10 @@ def infer_data_api(model, work_dir, model_name, dataset, index_set=None, api_npr
     return res
 
 
-def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, api_nproc=4):
+def infer_data(model, args, model_name, work_dir, dataset, out_file, verbose=False, api_nproc=4):
+    
+    model = supported_VLM[model_name](args=args) if isinstance(model, str) else model
+
     dataset_name = dataset.dataset_name
     prev_file = f'{work_dir}/{model_name}_{dataset_name}_PREV.pkl'
     res = load(prev_file) if osp.exists(prev_file) else {}
@@ -81,7 +84,6 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     data = dataset.data.iloc[sheet_indices]
     data_indices = [i for i in data['index']]
 
-    # If finished, will exit without building the model
     all_finished = True
     for i in range(lt):
         idx = data.iloc[i]['index']
@@ -90,14 +92,11 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     if all_finished:
         res = {k: res[k] for k in data_indices}
         dump(res, out_file)
-        return
+        return model
 
     # Data need to be inferred
     data = data[~data['index'].isin(res)]
     lt = len(data)
-
-    
-    model = supported_VLM[model_name]() if isinstance(model, str) else model
 
     is_api = getattr(model, 'is_api', False)
     if is_api:
@@ -129,7 +128,6 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
             struct = dataset.build_prompt(data.iloc[i])
 
         response = model.generate(message=struct, dataset=dataset_name)
-        
         torch.cuda.empty_cache()
 
         if verbose:
@@ -145,9 +143,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     return model
 
 
-# A wrapper for infer_data, do the pre & post processing
-def infer_data_job(model, work_dir, model_name, dataset, verbose=False, api_nproc=4, ignore_failed=False):
-
+def infer_data_job(model, args, work_dir, model_name, dataset, verbose=False, api_nproc=4, ignore_failed=False):
     rank, world_size = get_rank_and_world_size()
     dataset_name = dataset.dataset_name
     result_file = osp.join(work_dir, f'{model_name}_{dataset_name}.xlsx')
@@ -167,7 +163,7 @@ def infer_data_job(model, work_dir, model_name, dataset, verbose=False, api_npro
     out_file = tmpl.format(rank)
 
     model = infer_data(
-        model=model, work_dir=work_dir, model_name=model_name, dataset=dataset,
+        model=model, args=args, work_dir=work_dir, model_name=model_name, dataset=dataset,
         out_file=out_file, verbose=verbose, api_nproc=api_nproc)
     if world_size > 1:
         dist.barrier()
@@ -189,7 +185,5 @@ def infer_data_job(model, work_dir, model_name, dataset, verbose=False, api_npro
             os.remove(tmpl.format(i))
     if world_size > 1:
         dist.barrier()
-
-    
 
     return model

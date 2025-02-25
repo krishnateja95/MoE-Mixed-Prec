@@ -4,7 +4,7 @@ except ImportError:
     pass
 
 from .smp import *
-from .api import *
+# from .api import *
 from .dataset import *
 from .utils import *
 from .vlm import *

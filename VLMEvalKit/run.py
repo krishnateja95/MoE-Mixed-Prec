@@ -13,7 +13,7 @@ from vlmeval.smp import *
 from vlmeval.utils.result_transfer import MMMU_result_transfer, MMTBench_result_transfer
 
 
-def build_model_from_config(cfg, model_name):
+def build_model_from_config(cfg, model_name, args):
     import vlmeval.api
     import vlmeval.vlm
     config = cp.deepcopy(cfg[model_name])
@@ -128,6 +128,15 @@ You can launch the evaluation by setting either --data and --model or --config.
     parser.add_argument('--data', type=str, nargs='+', help='Names of Datasets')
     parser.add_argument('--model', type=str, nargs='+', help='Names of Models')
     parser.add_argument('--config', type=str, help='Path to the Config Json File')
+    #quantization
+    # parser.add_argument('--model_precision', type=str, help='model precision type')
+    parser.add_argument('--bits', type=int, default=4, help='bitwidth')
+    parser.add_argument('--quant_format', type=str, default="", help='quant_format')
+    parser.add_argument('--model_precision', type=str, default="", help='quant_format')
+    parser.add_argument('--json_file', type=str, default="None", help='json file for custom layer-wise quantization')
+    parser.add_argument('--saveresults', action='store_true', help='Ignore failed indices. ')
+
+
     # Work Dir
     parser.add_argument('--work-dir', type=str, default='./outputs', help='select the output directory')
     # Infer + Eval or Infer Only
@@ -206,7 +215,7 @@ def main():
             os.makedirs(pred_root, exist_ok=True)
 
         if use_config:
-            model = build_model_from_config(cfg['model'], model_name)
+            model = build_model_from_config(cfg['model'], model_name, args)
 
         for _, dataset_name in enumerate(args.data):
             try:
@@ -301,6 +310,7 @@ def main():
                 else:
                     model = infer_data_job(
                         model,
+                        args = args,
                         work_dir=pred_root,
                         model_name=model_name,
                         dataset=dataset,
@@ -384,11 +394,33 @@ def main():
 
                     # Perform the Evaluation
                     eval_results = dataset.evaluate(result_file, **judge_kwargs)
-                    # Display Evaluation Results in Terminal
+
+                    if args.saveresults:
+                        
+                        list_1 = ["Model",    "dataset",     "model_precision",    "quant_format",     "bits",      "json_file",           "Overall"               ]
+                        list_2 = [args.model[0], dataset_name,  args.model_precision, args.quant_format,  args.bits,  str(args.json_file),   float(eval_results["Overall"]) ] 
+
+                        assert len(list_1) == len(list_2)
+
+                        csv_file = "all_vlmevalkit_results.csv"
+                        file_exists = os.path.exists(csv_file)
+
+                        with open(csv_file, 'a', newline = '') as csvfile:
+                            writer = csv.writer(csvfile)
+                            
+                            if not file_exists:
+                                writer.writerow(list_1)
+                            
+                            writer.writerow(list_2) 
+                            
+                        csvfile.close()
+                    
                     if eval_results is not None:
                         assert isinstance(eval_results, dict) or isinstance(eval_results, pd.DataFrame)
                         logger.info(f'The evaluation of model {model_name} x dataset {dataset_name} has finished! ')
                         logger.info('Evaluation Results:')
+                        
+                        
                         if isinstance(eval_results, dict):
                             logger.info('\n' + json.dumps(eval_results, indent=4))
                         elif isinstance(eval_results, pd.DataFrame):
@@ -419,9 +451,46 @@ def main():
             if world_size > 1:
                 dist.barrier()
 
+        if args.model_precision == "activation_frequency_profiling":
+
+            if args.model[0] == "molmoE-1B-0924":
+                
+                from vlmeval.vlm.MolmoE.quant_modeling_molmoe import MolmoeSparseMoeBlock
+                activation_frequency_dict = {}
+                            
+                for name, module in model.model.named_modules():
+                    if isinstance(module, MolmoeSparseMoeBlock):
+                        layer_id, num_experts = module.get_layer_stats()
+                        activation_frequency  = module.get_expert_activation()
+                        
+                        for expert_id in range(0, num_experts):
+                            key = f"model.transformer.blocks.{layer_id}.mlp.experts.{expert_id}"
+                            activation_frequency_dict[key] = activation_frequency[f'expert_{expert_id}']
+
+            elif "deepseek" in args.model[0]:
+                from vlmeval.vlm.DeepSeek_VL2_quant.modeling_deepseek import DeepseekV2MoE
+
+                activation_frequency_dict = {}
+                
+                for name, module in model.model.named_modules():
+                    if isinstance(module, DeepseekV2MoE):
+                        layer_id, num_experts = module.get_layer_stats()
+                        activation_frequency  = module.get_expert_activation()
+                        
+                        for expert_id in range(0, num_experts):
+                            key = f"language.model.layers.{layer_id}.mlp.experts.{expert_id}"
+                            activation_frequency_dict[key] = activation_frequency[f'expert_{expert_id}']
+
+            print(activation_frequency_dict)
+
+            import json
+            file_path = f"activation_profiling/activation_frequency_{args.model[0]}_{args.data[0]}.json"
+
+            with open(file_path, 'w') as json_file:
+                json.dump(activation_frequency_dict, json_file, indent=4)  # Use indent for pretty formatting
+
     if world_size > 1:
         dist.destroy_process_group()
-
 
 if __name__ == '__main__':
     load_env()
